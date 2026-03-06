@@ -1,0 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-zinc-100 font-sans antialiased;
+  }
+}
+
+.roadmap-card {
+  @apply bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 backdrop-blur-sm;
+}
+
+.markdown-body h1 { @apply text-2xl font-display font-bold mb-4 text-emerald-400; }
+.markdown-body h2 { @apply text-xl font-display font-semibold mt-6 mb-3 text-emerald-300; }
+.markdown-body h3 { @apply text-lg font-display font-medium mt-4 mb-2 text-emerald-200; }
+.markdown-body p { @apply mb-4 text-zinc-300 leading-relaxed; }
+.markdown-body ul { @apply list-disc list-inside mb-4 space-y-2 text-zinc-300; }
+.markdown-body li strong { @apply text-zinc-100; }
+.markdown-body blockquote { @apply border-l-4 border-emerald-500 pl-4 italic my-4 text-zinc-400; }
