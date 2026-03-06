@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Trophy, 
@@ -28,7 +28,9 @@ import {
   ListTodo,
   Trash2,
   ShieldCheck,
-  Users
+  Users,
+  Save,
+  FolderOpen
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { generateRoadmapStream, generateRandomChallenge, resetChat } from './services/geminiService';
@@ -50,6 +52,88 @@ export default function App() {
   const [history, setHistory] = useState<{name: string, date: string}[]>([]);
   const [seasonInput, setSeasonInput] = useState('');
   const [pendingChallenges, setPendingChallenges] = useState<string[]>([]);
+  const [savedRoadmaps, setSavedRoadmaps] = useState<{id: string, name: string, content: string, date: string}[]>([]);
+
+  // Load all data from localStorage on mount
+  useEffect(() => {
+    const savedRoadmapsData = localStorage.getItem('soccer_roadmaps');
+    if (savedRoadmapsData) {
+      try { setSavedRoadmaps(JSON.parse(savedRoadmapsData)); } catch (e) { console.error(e); }
+    }
+
+    const savedHistory = localStorage.getItem('soccer_history');
+    if (savedHistory) {
+      try { setHistory(JSON.parse(savedHistory)); } catch (e) { console.error(e); }
+    }
+
+    const savedPending = localStorage.getItem('soccer_pending');
+    if (savedPending) {
+      try { setPendingChallenges(JSON.parse(savedPending)); } catch (e) { console.error(e); }
+    }
+
+    const savedDifficulty = localStorage.getItem('soccer_difficulty');
+    if (savedDifficulty) setDifficulty(savedDifficulty);
+
+    const savedActiveRoadmap = localStorage.getItem('soccer_active_roadmap');
+    if (savedActiveRoadmap) setRoadmap(savedActiveRoadmap);
+  }, []);
+
+  // Persist data whenever it changes
+  useEffect(() => {
+    localStorage.setItem('soccer_history', JSON.stringify(history));
+  }, [history]);
+
+  useEffect(() => {
+    localStorage.setItem('soccer_pending', JSON.stringify(pendingChallenges));
+  }, [pendingChallenges]);
+
+  useEffect(() => {
+    localStorage.setItem('soccer_difficulty', difficulty);
+  }, [difficulty]);
+
+  useEffect(() => {
+    if (roadmap !== null) {
+      localStorage.setItem('soccer_active_roadmap', roadmap);
+    } else {
+      localStorage.removeItem('soccer_active_roadmap');
+    }
+  }, [roadmap]);
+
+  const handleSaveRoadmap = () => {
+    if (!roadmap) return;
+    
+    let name = "Roteiro Sem Nome";
+    const match = roadmap.match(/# 1\. NOME DO PROJETO\n(.*?)\n/);
+    if (match && match[1]) name = match[1].trim();
+    
+    const customName = prompt("Dê um nome para salvar este roteiro:", name);
+    if (customName === null) return;
+
+    const newSaved = {
+      id: Date.now().toString(),
+      name: customName || name,
+      content: roadmap,
+      date: new Date().toLocaleDateString()
+    };
+
+    const updated = [newSaved, ...savedRoadmaps];
+    setSavedRoadmaps(updated);
+    localStorage.setItem('soccer_roadmaps', JSON.stringify(updated));
+  };
+
+  const handleLoadRoadmap = (content: string) => {
+    setRoadmap(content);
+    // Scroll to top to see the loaded roadmap
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDeleteSaved = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm("Tem certeza que deseja excluir este roteiro salvo?")) return;
+    const updated = savedRoadmaps.filter(r => r.id !== id);
+    setSavedRoadmaps(updated);
+    localStorage.setItem('soccer_roadmaps', JSON.stringify(updated));
+  };
 
   const handleArchiveHistory = (index: number) => {
     setHistory(prev => prev.filter((_, i) => i !== index));
@@ -76,6 +160,10 @@ export default function App() {
   const handleCompleteFromPending = (name: string, index: number) => {
     handleGenerate(`Completar ${name}`);
     handleRemovePending(index);
+    // Scroll to history
+    setTimeout(() => {
+      document.getElementById('historico-conquistas')?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
   };
 
   const handleGenerate = async (customPrompt?: string) => {
@@ -89,6 +177,8 @@ export default function App() {
       const challengeName = promptToUse.replace(/completar/i, '').trim();
       if (challengeName) {
         setHistory(prev => [{ name: challengeName, date: new Date().toLocaleDateString() }, ...prev]);
+        // Also remove from pending if it exists there
+        setPendingChallenges(prev => prev.filter(c => c.toLowerCase() !== challengeName.toLowerCase()));
       }
     } else if (isSeasonSummary) {
       setHistory(prev => [{ name: "Temporada Finalizada", date: new Date().toLocaleDateString() }, ...prev]);
@@ -96,7 +186,10 @@ export default function App() {
 
     setLoading(true);
     setError(null);
-    if (!isCompletion && !customPrompt) setRoadmap(""); 
+    
+    // For completions, we keep the roadmap but show a loading overlay or similar
+    // For new generations, we clear it
+    if (!isCompletion && !isSeasonSummary) setRoadmap(""); 
     
     try {
       await generateRoadmapStream(promptToUse, difficulty, (text) => {
@@ -112,6 +205,7 @@ export default function App() {
   };
 
   const handleReset = () => {
+    if (!confirm("Tem certeza que deseja resetar toda a sua carreira? Isso apagará o histórico e os desafios pendentes.")) return;
     resetChat();
     setRoadmap(null);
     setHistory([]);
@@ -119,6 +213,9 @@ export default function App() {
     setInput("");
     setSeasonInput("");
     setError(null);
+    localStorage.removeItem('soccer_active_roadmap');
+    localStorage.removeItem('soccer_history');
+    localStorage.removeItem('soccer_pending');
   };
 
   const handleSeasonSubmit = () => {
@@ -127,11 +224,20 @@ export default function App() {
     setSeasonInput("");
   };
 
-  const handleQuickComplete = () => {
-    const name = prompt("Qual o nome do desafio completado?");
+  const handleQuickComplete = (defaultName: string = "") => {
+    const name = prompt("Qual o nome do desafio completado?", defaultName);
     if (name) {
       handleGenerate(`Completar ${name}`);
+      // Scroll to history after a short delay to allow state update
+      setTimeout(() => {
+        document.getElementById('historico-conquistas')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
     }
+  };
+
+  const handlePlaceholderClick = (e: React.MouseEvent, feature: string) => {
+    e.preventDefault();
+    alert(`${feature} estará disponível em breve!`);
   };
 
   const getAchievementIcon = (name: string, className: string = "w-4 h-4") => {
@@ -352,14 +458,19 @@ export default function App() {
 
         {/* Results Area */}
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
-            {loading && !roadmap && (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <div className="lg:col-span-2 space-y-8 relative">
+            {loading && (
+              <div className={cn(
+                "flex flex-col items-center justify-center py-20 gap-4 transition-all",
+                roadmap ? "absolute inset-0 z-20 bg-zinc-950/60 backdrop-blur-sm rounded-3xl" : ""
+              )}>
                 <div className="relative">
                   <div className="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
                   <Trophy className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-emerald-500 w-6 h-6" />
                 </div>
-                <p className="text-zinc-500 font-mono text-sm animate-pulse">Escalando o time de especialistas...</p>
+                <p className="text-zinc-500 font-mono text-sm animate-pulse">
+                  {roadmap ? "Atualizando roteiro..." : "Escalando o time de especialistas..."}
+                </p>
               </div>
             )}
 
@@ -386,8 +497,9 @@ export default function App() {
                       </div>
                       <button 
                         onClick={() => window.print()}
-                        className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                        className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1"
                       >
+                        <History className="w-3 h-3" />
                         Imprimir / Salvar PDF
                       </button>
                     </div>
@@ -398,18 +510,30 @@ export default function App() {
 
                     <div className="mt-8 pt-6 border-t border-zinc-800 flex flex-wrap justify-center gap-4">
                       <button
-                        onClick={handleQuickComplete}
+                        onClick={() => {
+                          let defaultName = "";
+                          const match = roadmap.match(/# 1\. NOME DO PROJETO\n(.*?)\n/);
+                          if (match && match[1]) defaultName = match[1].trim();
+                          handleQuickComplete(defaultName);
+                        }}
                         className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20 group"
                       >
                         <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
                         Completar Desafio
                       </button>
                       <button
-                        onClick={handleAddToPending}
+                        onClick={handleSaveRoadmap}
                         className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl font-bold transition-all flex items-center gap-2 border border-zinc-700 group"
                       >
+                        <Save className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        Salvar Roteiro
+                      </button>
+                      <button
+                        onClick={handleAddToPending}
+                        className="px-8 py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 rounded-xl font-bold transition-all flex items-center gap-2 border border-zinc-800 group"
+                      >
                         <PlusCircle className="w-5 h-5 group-hover:rotate-90 transition-transform" />
-                        Adicionar à caixa de desafios a completar
+                        Adicionar à Lista
                       </button>
                     </div>
                   </div>
@@ -447,7 +571,7 @@ export default function App() {
                 ) : (
                   pendingChallenges.map((challenge, idx) => (
                     <motion.div
-                      key={idx}
+                      key={`pending-${challenge}-${idx}`}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl flex items-center justify-between group hover:border-blue-500/30 transition-all"
@@ -507,8 +631,44 @@ export default function App() {
               </div>
             </div>
 
+            {/* Saved Roadmaps Section */}
+            <div className="roadmap-card border-zinc-800/50 bg-amber-500/[0.02]">
+              <div className="flex items-center gap-2 mb-4 border-b border-zinc-800 pb-3">
+                <FolderOpen className="text-amber-500 w-4 h-4" />
+                <h3 className="font-display font-bold text-base">Roteiros Salvos</h3>
+              </div>
+              
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                {savedRoadmaps.length === 0 ? (
+                  <div className="text-center py-6 border border-dashed border-zinc-800 rounded-xl">
+                    <p className="text-zinc-600 text-xs italic">Nenhum roteiro salvo.</p>
+                  </div>
+                ) : (
+                  savedRoadmaps.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => handleLoadRoadmap(item.content)}
+                      className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl flex items-center justify-between group hover:border-amber-500/30 transition-all cursor-pointer"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-zinc-300 text-sm font-medium truncate">{item.name}</h4>
+                        <span className="text-[10px] text-zinc-600 font-mono">{item.date}</span>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteSaved(e, item.id)}
+                        className="p-1.5 hover:bg-red-500/10 text-zinc-600 hover:text-red-500 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        title="Excluir Salvo"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             {/* History List */}
-            <div className="roadmap-card border-zinc-800/50">
+            <div id="historico-conquistas" className="roadmap-card border-zinc-800/50 scroll-mt-24">
               <div className="flex items-center justify-between mb-4 border-b border-zinc-800 pb-2">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="text-emerald-500 w-4 h-4" />
@@ -518,7 +678,7 @@ export default function App() {
               
               <div className="mb-4">
                 <button
-                  onClick={handleQuickComplete}
+                  onClick={() => handleQuickComplete()}
                   className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/50 text-zinc-300 hover:text-emerald-400 rounded-lg transition-all flex items-center justify-center gap-2 text-xs font-bold group"
                 >
                   <Zap className="w-3 h-3 group-hover:animate-pulse" />
@@ -534,7 +694,7 @@ export default function App() {
                 ) : (
                   history.map((item, idx) => (
                     <motion.div 
-                      key={idx}
+                      key={`history-${item.name}-${idx}`}
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       className="p-2.5 bg-zinc-950/50 border border-zinc-800/50 rounded-xl flex items-center gap-3 group hover:border-emerald-500/30 transition-all"
@@ -626,9 +786,9 @@ export default function App() {
             <span className="text-sm font-display font-bold">SoccerRoadmap</span>
           </div>
           <div className="flex gap-8 text-xs font-mono text-zinc-600 uppercase tracking-widest">
-            <a href="#" className="hover:text-emerald-500 transition-colors">Sobre</a>
-            <a href="#" className="hover:text-emerald-500 transition-colors">Comunidade</a>
-            <a href="#" className="hover:text-emerald-500 transition-colors">API</a>
+            <a href="#" onClick={(e) => handlePlaceholderClick(e, "Sobre")} className="hover:text-emerald-500 transition-colors">Sobre</a>
+            <a href="#" onClick={(e) => handlePlaceholderClick(e, "Comunidade")} className="hover:text-emerald-500 transition-colors">Comunidade</a>
+            <a href="#" onClick={(e) => handlePlaceholderClick(e, "API")} className="hover:text-emerald-500 transition-colors">API</a>
           </div>
           <p className="text-xs text-zinc-700">© 2026 SoccerRoadmap AI. Todos os direitos reservados.</p>
         </div>
